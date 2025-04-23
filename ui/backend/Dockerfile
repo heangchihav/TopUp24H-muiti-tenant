@@ -1,19 +1,17 @@
 # Stage 1: Build the static website
-FROM node:18-alpine
+FROM node:18-alpine as builder
 
 WORKDIR /app
 
-# Install dependencies using npm
+# Install dependencies
 COPY package.json package-lock.json ./
-
-# Install without dev dependencies
 RUN npm ci --omit=dev
 
-# Copy source files
+# Copy all source
 COPY . .
 
-# Build Expo static web
+# Build static site for web
 RUN npx expo export --platform web
 
-# Keep container running to serve files
-CMD ["tail", "-f", "/dev/null"]
+# Final image (scratch or used in CI/CD)
+# We don't need this for running—just copying from /app/dist

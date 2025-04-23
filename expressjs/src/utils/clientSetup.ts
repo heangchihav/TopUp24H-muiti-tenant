@@ -9,7 +9,7 @@ import { createDNSRecord } from '@/libs/cloudflare';
  * @param merchantId The ID of the client (merchant)
  * @param websiteId  The unique ID of the website (uuid)
  * @param templateId The template folder name to use (e.g. 'portfolio')
- * @param domains    List of domains to point to this website (e.g. ['client1.domain.com', 'client1-alt.com'])
+ * @param domains    List of domains to point to this website (e.g. ['client1.domain.com'])
  */
 export const createClientWebsite = async (
     merchantId: string,
@@ -19,32 +19,34 @@ export const createClientWebsite = async (
 ) => {
     const projectRoot = path.resolve(__dirname, '../../../');
 
-    // Paths
-    const templatePath = path.join(projectRoot, 'expo-templates', templateId);
-    const websitePath = path.join(projectRoot, 'nginx', 'clients', merchantId, websiteId);
+    // Define folders
+    const templatePath = path.join(projectRoot, 'ui', 'themes', templateId);
+    const websiteSourcePath = path.join(projectRoot, 'ui', 'frontend', merchantId, websiteId);
+    const websiteDistPath = path.join(projectRoot, 'nginx', 'clients', merchantId, websiteId, 'dist');
+
     const buildImageName = `client-${websiteId}-build`;
     const tempContainerName = `client-${websiteId}-temp`;
 
-    // Prevent duplicate creation
-    if (fs.existsSync(websitePath)) {
-        throw new Error(`Website already exists: ${websitePath}`);
+    if (fs.existsSync(websiteSourcePath)) {
+        throw new Error(`Client website already exists: ${websiteSourcePath}`);
     }
 
-    // Step 1: Copy template to new client website folder
-    await fs.copy(templatePath, websitePath);
+    // 1. Copy selected template to frontend folder for editing
+    await fs.copy(templatePath, websiteSourcePath);
 
-    // Step 2: Docker build static site
+    // 2. Build Docker image from the client's editable code
     execSync(`docker build -t ${buildImageName} .`, {
-        cwd: websitePath,
+        cwd: websiteSourcePath,
         stdio: 'inherit',
     });
 
-    // Step 3: Export dist from container
+    // 3. Export dist files from container
     execSync(`docker create --name ${tempContainerName} ${buildImageName}`);
-    execSync(`docker cp ${tempContainerName}:/app/dist ${websitePath}/dist`);
+    await fs.ensureDir(websiteDistPath);
+    execSync(`docker cp ${tempContainerName}:/app/dist ${websiteDistPath}`);
     execSync(`docker rm ${tempContainerName}`);
 
-    // Step 4: Handle each domain
+    // 4. Create domain NGINX configs
     for (const domain of domains) {
         // Create DNS record
         await createDNSRecord(domain);
@@ -71,10 +73,10 @@ server {
     }
 }
 `;
-        const confPath = path.join(projectRoot, 'nginx', 'conf.d', `${websiteId}__${domain}.conf`);
-        await fs.writeFile(confPath, nginxConf);
+        const confFilePath = path.join(projectRoot, 'nginx', 'conf.d', `${websiteId}__${domain}.conf`);
+        await fs.outputFile(confFilePath, nginxConf);
     }
 
-    // Step 5: Reload NGINX to apply all new domains
-    execSync('docker exec tenant-nginx nginx -s reload');
+    // 5. Reload NGINX
+    execSync('docker exec nginx nginx -s reload');
 };
